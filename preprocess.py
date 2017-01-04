@@ -96,3 +96,23 @@ def gamma_threshold(img, gamma=1.0, threshold=(100, 255)):
     _, result = cv2.threshold(result.astype(np.uint8), threshold[0], threshold[1], cv2.THRESH_BINARY)
 
     return result
+
+
+def guassian_blur(img, ksize):
+    """
+    Applies guassian blur on the image of the size specified by ksize and returns
+    :param img: Image to be filtered
+    :param ksize: Size of the kernel
+    :return: Filtered image
+    """
+    return cv2.GaussianBlur(img, (ksize, ksize), 0)
+
+
+def median_blur(img, ksize):
+    """
+    Applies median blur on the image of the size specified by ksize and returns
+    :param img: Image to be filtered
+    :param ksize: Size of the kernel
+    :return: Filtered image
+    """
+    return cv2.medianBlur(img, ksize)
