@@ -45,6 +45,12 @@ class LaneDetector():
         self.frame_idx = 0
 
     def process_frame(self, frame):
+        perspective_destination = np.float32([
+        (0, 720),
+        (0, 0),
+        (1280, 0),
+        (1280, 720)])
+
         # Save the shape of the original image
         self.org_img_size = frame.shape
 
@@ -114,19 +120,19 @@ class LaneDetector():
         # Save the new values
         self.fit_values = [left_fit, right_fit]
 
-        # histogram = self.__running_mean(motion, 10, motion.shape[1] / 50)
-        # features = np.mean(histogram, 0)
-        # fig = plt.figure()
-        # fig.add_subplot(331), plt.imshow(frame), plt.title('Original')
-        # fig.add_subplot(332), plt.imshow(resize), plt.title('Resized')
-        # fig.add_subplot(333), plt.imshow(dist_correct), plt.title('Undistorted')
-        # fig.add_subplot(334), plt.imshow(blur), plt.title('Filtered')
-        # fig.add_subplot(335), plt.imshow(binary, cmap='gray'), plt.title('Thresholded')
-        # fig.add_subplot(336), plt.imshow(birdseye, cmap='gray'), plt.title('Overhead')
-        # fig.add_subplot(337), plt.imshow(motion, cmap='gray'), plt.title('Motion')
-        # fig.add_subplot(338), plt.plot(features), plt.title('Motion')
-        # fig.add_subplot(339), plt.imshow(result), plt.title('Output')
-        # plt.show()
+        histogram = self.__running_mean(motion, 10, motion.shape[1] / 50)
+        features = np.mean(histogram, 0)
+        fig = plt.figure()
+        fig.add_subplot(331), plt.imshow(frame), plt.title('Original')
+        fig.add_subplot(332), plt.imshow(resize), plt.title('Resized')
+        fig.add_subplot(333), plt.imshow(dist_correct), plt.title('Undistorted')
+        fig.add_subplot(334), plt.imshow(blur), plt.title('Filtered')
+        fig.add_subplot(335), plt.imshow(binary, cmap='gray'), plt.title('Thresholded')
+        fig.add_subplot(336), plt.imshow(birdseye, cmap='gray'), plt.title('Overhead')
+        #fig.add_subplot(337), plt.imshow(motion, cmap='gray'), plt.title('Motion')
+        fig.add_subplot(338), plt.plot(features), plt.title('Motion')
+        fig.add_subplot(339), plt.imshow(result), plt.title('Output')
+        plt.show()
 
         return result
 
@@ -380,15 +386,17 @@ if __name__ == "__main__":
 
     calibration = calib.calibrate_camera('camera_cal', (9, 6), (720, 1280, 3))
 
-    images = glob('test_images/*')
+    from scipy.misc import imread, imsave
+    images = glob('test_images/test*')
+    for idx, img_path in enumerate(images):
+        img = imread(img_path)
+        ld = LaneDetector(SRC, DST, cam_calibration=calibration)
+        res = ld.process_frame(img)
+        imsave('output_images/test'+str(idx + 1)+'.jpg', res)
 
-    # for idx, img_path in enumerate(images):
-    #     img = imread(img_path)
-    #     ld = LaneDetector(img.shape, SRC, DST, cam_calibration=calibration)
-    #     res = ld.process_frame(img)
 
-    ld = LaneDetector(SRC, DST, cam_calibration=calibration)
-    project_output = 'project_video_out.mp4'
-    clip1 = VideoFileClip('project_video.mp4')
-    project_clip = clip1.fl_image(ld.process_frame)
-    project_clip.write_videofile(project_output, audio=False)
+    # ld = LaneDetector(SRC, DST, cam_calibration=calibration)
+    # project_output = 'project_video_out.mp4'
+    # clip1 = VideoFileClip('project_video.mp4')
+    # project_clip = clip1.fl_image(ld.process_frame)
+    # project_clip.write_videofile(project_output, audio=False)
