@@ -37,7 +37,8 @@ class LaneDetector():
         self.max_confidences = np.zeros(shape=2, dtype=np.uint32)
         self.fit_values = np.zeros(shape=(2,3), dtype=np.float)
         self.fit_values[0][2] = 200
-        self.fit_values[1][2] = 1000
+        self.fit_values[1][2] = 1100
+        self.lane_width = 1000
 
         self.frame_mem_max = 5
         self.frame_memory = np.zeros(shape=(self.frame_mem_max, 720, 1280), dtype = np.uint8)
@@ -120,19 +121,19 @@ class LaneDetector():
         # Save the new values
         self.fit_values = [left_fit, right_fit]
 
-        histogram = self.__running_mean(motion, 10, motion.shape[1] / 50)
-        features = np.mean(histogram, 0)
-        fig = plt.figure()
-        fig.add_subplot(331), plt.imshow(frame), plt.title('Original')
-        fig.add_subplot(332), plt.imshow(resize), plt.title('Resized')
-        fig.add_subplot(333), plt.imshow(dist_correct), plt.title('Undistorted')
-        fig.add_subplot(334), plt.imshow(blur), plt.title('Filtered')
-        fig.add_subplot(335), plt.imshow(binary, cmap='gray'), plt.title('Thresholded')
-        fig.add_subplot(336), plt.imshow(birdseye, cmap='gray'), plt.title('Overhead')
-        #fig.add_subplot(337), plt.imshow(motion, cmap='gray'), plt.title('Motion')
-        fig.add_subplot(338), plt.plot(features), plt.title('Motion')
-        fig.add_subplot(339), plt.imshow(result), plt.title('Output')
-        plt.show()
+        # histogram = self.__running_mean(motion, 10, motion.shape[1] / 50)
+        # features = np.mean(histogram, 0)
+        # fig = plt.figure()
+        # fig.add_subplot(331), plt.imshow(frame), plt.title('Original')
+        # fig.add_subplot(332), plt.imshow(resize), plt.title('Resized')
+        # fig.add_subplot(333), plt.imshow(dist_correct), plt.title('Undistorted')
+        # fig.add_subplot(334), plt.imshow(blur), plt.title('Filtered')
+        # fig.add_subplot(335), plt.imshow(binary, cmap='gray'), plt.title('Thresholded')
+        # fig.add_subplot(336), plt.imshow(birdseye, cmap='gray'), plt.title('Overhead')
+        # #fig.add_subplot(337), plt.imshow(motion, cmap='gray'), plt.title('Motion')
+        # fig.add_subplot(338), plt.plot(features), plt.title('Motion')
+        # fig.add_subplot(339), plt.imshow(result), plt.title('Output')
+        # plt.show()
 
         return result
 
@@ -163,6 +164,7 @@ class LaneDetector():
         left_bot = self.__evaluate_curve(self.proc_img_size[0], left_fit)
         right_bot = self.__evaluate_curve(self.proc_img_size[0], right_fit)
         val_center = (left_bot + right_bot) / 2.0
+        self.lane_width = right_bot - left_bot
 
         # Compute the offset from the middle
         dist_offset = val_center - self.proc_img_size[1] / 2
@@ -191,8 +193,8 @@ class LaneDetector():
         left_curve = self.__compute_curvature(left_fit, self.proc_img_size[0] / 2)
         Right_curve = self.__compute_curvature(right_fit, self.proc_img_size[0] / 2)
         str_curv = 'Curvature: Right = ' + str(np.round(Right_curve, 2)) + ', Left = ' + str(np.round(left_curve, 2))
-        str_conf = 'Confidence: Right = ' + str(np.round(self.confidences[1] / self.max_confidences[1], 2)) + \
-                   ', Left = ' + str(np.round(self.confidences[0] / self.max_confidences[0], 2))
+        str_conf = 'Confidence: Right = ' + str(np.round(self.confidences[1] / np.max(self.max_confidences), 2)) + \
+                   ', Left = ' + str(np.round(self.confidences[0] / np.max(self.max_confidences), 2))
 
         # Write the curvature and offset values onto the image
         font = cv2.FONT_HERSHEY_COMPLEX
@@ -251,6 +253,14 @@ class LaneDetector():
                 all_x = right_values.T[0]
                 all_y = right_values.T[1]
                 right_fit = np.polyfit(all_x, all_y, 2)
+
+        # Check if one of the lanes is not confident or does not exist
+        if ((left_fit is None) or (len(left_values) < 3500)) and len(right_values) > 20000 and (right_fit is not None):
+            left_fit = np.copy(right_fit)
+            left_fit[2] = right_fit[2] - self.lane_width
+        if ((right_fit is None) or (len(right_values) < 3500)) and len(left_values) > 20000 and (left_fit is not None):
+            right_fit = np.copy(left_fit)
+            right_fit[2] = left_fit[2] + self.lane_width
 
         return left_fit, len(left_values), right_fit, len(right_values)
 
@@ -374,7 +384,7 @@ class LaneDetector():
 if __name__ == "__main__":
     SRC = np.float32([
         (0, 720),
-        (520, 470),
+        (530, 470),
         (760, 470),
         (1280, 720)])
 
@@ -386,17 +396,17 @@ if __name__ == "__main__":
 
     calibration = calib.calibrate_camera('camera_cal', (9, 6), (720, 1280, 3))
 
-    from scipy.misc import imread, imsave
-    images = glob('test_images/test*')
-    for idx, img_path in enumerate(images):
-        img = imread(img_path)
-        ld = LaneDetector(SRC, DST, cam_calibration=calibration)
-        res = ld.process_frame(img)
-        imsave('output_images/test'+str(idx + 1)+'.jpg', res)
+    # from scipy.misc import imread, imsave
+    # images = glob('test_images/test*')
+    # for idx, img_path in enumerate(images):
+    #     img = imread(img_path)
+    #     ld = LaneDetector(SRC, DST, cam_calibration=calibration)
+    #     res = ld.process_frame(img)
+    #     imsave('output_images/test'+str(idx + 1)+'.jpg', res)
 
 
-    # ld = LaneDetector(SRC, DST, cam_calibration=calibration)
-    # project_output = 'project_video_out.mp4'
-    # clip1 = VideoFileClip('project_video.mp4')
-    # project_clip = clip1.fl_image(ld.process_frame)
-    # project_clip.write_videofile(project_output, audio=False)
+    ld = LaneDetector(SRC, DST, cam_calibration=calibration)
+    project_output = 'challenge_out.mp4'
+    clip1 = VideoFileClip('challenge_video.mp4')
+    project_clip = clip1.fl_image(ld.process_frame)
+    project_clip.write_videofile(project_output, audio=False)
