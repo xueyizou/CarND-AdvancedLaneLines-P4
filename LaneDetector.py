@@ -8,18 +8,7 @@ import matplotlib.pyplot as plt
 
 from moviepy.editor import VideoFileClip
 
-class PerspectiveTransformer():
-    def __init__(self, src, dst):
-        self.src = src
-        self.dst = dst
-        self.M = cv2.getPerspectiveTransform(src, dst)
-        self.M_inv = cv2.getPerspectiveTransform(dst, src)
 
-    def transform(self, img):
-        return cv2.warpPerspective(img, self.M, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
-
-    def inverse_transform(self, img):
-        return cv2.warpPerspective(img, self.M_inv, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
 
 
 class LaneDetector():
@@ -116,12 +105,12 @@ class LaneDetector():
             self.max_confidences[1] = self.confidences[1]
 
         # Draw the lanes
-        result = self.__draw_lanes(frame, motion, left_fit, right_fit)
+        overlay, result = self.__draw_lanes(frame, motion, left_fit, right_fit)
 
         # Save the new values
         self.fit_values = [left_fit, right_fit]
 
-        # histogram = self.__running_mean(motion, 10, motion.shape[1] / 50)
+        # histogram = self.__running_mean(motion, 10, 50)
         # features = np.mean(histogram, 0)
         # fig = plt.figure()
         # fig.add_subplot(331), plt.imshow(frame), plt.title('Original')
@@ -130,18 +119,18 @@ class LaneDetector():
         # fig.add_subplot(334), plt.imshow(blur), plt.title('Filtered')
         # fig.add_subplot(335), plt.imshow(binary, cmap='gray'), plt.title('Thresholded')
         # fig.add_subplot(336), plt.imshow(birdseye, cmap='gray'), plt.title('Overhead')
-        # #fig.add_subplot(337), plt.imshow(motion, cmap='gray'), plt.title('Motion')
+        # fig.add_subplot(337), plt.imshow(overlay), plt.title('Overlay')
         # fig.add_subplot(338), plt.plot(features), plt.title('Motion')
         # fig.add_subplot(339), plt.imshow(result), plt.title('Output')
         # plt.show()
-
-        return result
+        #
+        # return result
 
     # ------------- PRIVATE FUNCTIONS ------------- #
     def __draw_lanes(self, img, birdseye, left_fit, right_fit):
         """
         Draws the lanes specified by the fits on top of the given image
-        :param img: The original image (should be of size org_img_size
+        :param img: The original image (should be of size img_sz
         :param left_fit: Left fit equation
         :param right_fit: Right fit equation
         :return: Final image
@@ -202,7 +191,7 @@ class LaneDetector():
         cv2.putText(result, str_offset, (30, 90), font, 1, (255, 0, 0), 2)
         cv2.putText(result, str_conf, (30, 120), font, 1, (255, 0, 0), 2)
 
-        return result
+        return overlay, result
 
     def __find_lanes(self, birdseye):
         """
@@ -211,26 +200,30 @@ class LaneDetector():
         :return: Left and right fit equations
         """
         # Compute the histogram
-        histogram = self.__running_mean(birdseye, 10, birdseye.shape[1] / 50)
+        histogram = self.__running_mean(birdseye, 10, 50)
 
         # Find the features in the histogram where the value is greater than the threshold of .05
-        features = np.argwhere(np.mean(histogram, 0) > .05)
+        features = np.argwhere(np.mean(histogram, 0) > 0)
+
+        # fig = plt.figure()
+        # fig.add_subplot(221), plt.imshow(birdseye, cmap='gray')
 
         # Compute the left fit
         left_fit = None
         left_values = []
         left_features = features[features < birdseye.shape[1] / 2.]
-        if len(left_features):
+        if len(left_features) >= 10:
             left_min = np.min(left_features)
             left_max = np.max(left_features)
 
             left_image = np.copy(birdseye)
             left_image[:, 0:left_min] = 0
             left_image[:, left_max:birdseye.shape[1]] = 0
-            left_image = preprocess.guassian_blur(left_image, 25)
+            # left_image = preprocess.guassian_blur(left_image, 25)
+            # fig.add_subplot(223), plt.imshow(left_image, cmap='gray')
 
             left_values = np.argwhere(left_image > .5)
-            if len(left_values):
+            if len(left_values) >= 10:
                 all_x = left_values.T[0]
                 all_y = left_values.T[1]
                 left_fit = np.polyfit(all_x, all_y, 2)
@@ -246,7 +239,8 @@ class LaneDetector():
             right_image = np.copy(birdseye)
             right_image[:, 0:right_min] = 0
             right_image[:, right_max:birdseye.shape[1]] = 0
-            right_image = preprocess.guassian_blur(right_image, 25)
+            # right_image = preprocess.guassian_blur(right_image, 25)
+            # fig.add_subplot(224), plt.imshow(right_image, cmap='gray')
 
             right_values = np.argwhere(right_image > .5)
             if len(right_values) >= 10:
@@ -254,13 +248,19 @@ class LaneDetector():
                 all_y = right_values.T[1]
                 right_fit = np.polyfit(all_x, all_y, 2)
 
+        # plt.show()
+
         # Check if one of the lanes is not confident or does not exist
-        if ((left_fit is None) or (len(left_values) < 3500)) and len(right_values) > 20000 and (right_fit is not None):
-            left_fit = np.copy(right_fit)
-            left_fit[2] = right_fit[2] - self.lane_width
-        if ((right_fit is None) or (len(right_values) < 3500)) and len(left_values) > 20000 and (left_fit is not None):
-            right_fit = np.copy(left_fit)
-            right_fit[2] = left_fit[2] + self.lane_width
+        # if (left_fit is not None) and (len(left_values) < len(right_values)) and right_fit is not None:
+        #     ratio = .5 + (.5 * len(left_values) / len(right_values))
+        #     left_fit[0] = (left_fit[0] * ratio) + (right_fit[0] * (1 - ratio))
+        #     left_fit[1] = (left_fit[1] * ratio) + (right_fit[1] * (1 - ratio))
+        #     left_fit[2] = (left_fit[2] * ratio) + ((right_fit[2] - self.lane_width) * (1 - ratio))
+        # if (right_fit is not None) and (len(right_values) < len(left_values)) and left_fit is not None:
+        #     ratio = .5 + (.5 * len(right_values) / len(left_values))
+        #     right_fit[0] = (right_fit[0] * ratio) + (left_fit[0] * (1 - ratio))
+        #     right_fit[1] = (right_fit[1] * ratio) + (left_fit[1] * (1 - ratio))
+        #     right_fit[2] = (right_fit[2] * ratio) + ((left_fit[2] + self.lane_width) * (1 - ratio))
 
         return left_fit, len(left_values), right_fit, len(right_values)
 
@@ -371,13 +371,18 @@ class LaneDetector():
         :return: The computed histograms
         """
         size = img.shape[0] / vert_slices
-        result = np.zeros(shape=(vert_slices, img.shape[1] - 24), dtype=np.float)
+        result = np.zeros(shape=(vert_slices, img.shape[1]), dtype=np.float)
 
         for i in np.arange(vert_slices):
             start = i * size
             end = (i + 1) * size
             vertical_mean = np.mean(img[start:end], axis=0)
-            window_sum = np.cumsum(np.insert(vertical_mean, 0, 0))
+
+            for j in np.arange(wsize / 2):
+                vertical_mean = np.insert(vertical_mean, 0, vertical_mean[0])
+                vertical_mean = np.insert(vertical_mean, len(vertical_mean), vertical_mean[-1])
+
+            window_sum = np.cumsum(vertical_mean)
             result[i, :] = (window_sum[wsize:] - window_sum[:-wsize]) / wsize
 
         return result
@@ -385,7 +390,7 @@ if __name__ == "__main__":
     SRC = np.float32([
         (0, 720),
         (530, 470),
-        (760, 470),
+        (750, 470),
         (1280, 720)])
 
     DST = np.float32([
@@ -406,7 +411,7 @@ if __name__ == "__main__":
 
 
     ld = LaneDetector(SRC, DST, cam_calibration=calibration)
-    project_output = 'challenge_out.mp4'
-    clip1 = VideoFileClip('challenge_video.mp4')
+    project_output = 'project_video_out.mp4'
+    clip1 = VideoFileClip('project_video.mp4')
     project_clip = clip1.fl_image(ld.process_frame)
     project_clip.write_videofile(project_output, audio=False)

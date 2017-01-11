@@ -2,6 +2,20 @@ import numpy as np
 import cv2
 
 
+class PerspectiveTransformer:
+    def __init__(self, src, dst):
+        self.src = src
+        self.dst = dst
+        self.M = cv2.getPerspectiveTransform(src, dst)
+        self.M_inv = cv2.getPerspectiveTransform(dst, src)
+
+    def transform(self, img):
+        return cv2.warpPerspective(img, self.M, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
+
+    def inverse_transform(self, img):
+        return cv2.warpPerspective(img, self.M_inv, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
+
+
 class Sobel:
     @staticmethod
     def absolute_thresh(img, orientation='x', sobel_kernel=3, threshold=(0, 255)):
@@ -116,3 +130,133 @@ def median_blur(img, ksize):
     :return: Filtered image
     """
     return cv2.medianBlur(img, ksize)
+
+def canny(img, low, high):
+    """
+    Performs and returns the canny thresholded image
+    :param img: The image to be thresholded
+    :param low: Low threshold
+    :param high: High threshold
+    :return: The canny thresholded image
+    """
+    return cv2.Canny(img, low, high)
+
+
+def region_of_interest(img, vertices):
+    """
+    Applies an image mask.
+
+    Only keeps the region of the image defined by the polygon
+    formed from `vertices`. The rest of the image is set to black.
+    """
+    # defining a blank mask to start with
+    mask = np.zeros_like(img)
+
+    # defining a 3 channel or 1 channel color to fill the mask with depending on the input image
+    if len(img.shape) > 2:
+        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
+        ignore_mask_color = (255,) * channel_count
+    else:
+        ignore_mask_color = 255
+
+    # filling pixels inside the polygon defined by "vertices" with the fill color
+    cv2.fillPoly(mask, vertices, ignore_mask_color)
+
+    # returning the image only where mask pixels are nonzero
+    masked_image = cv2.bitwise_and(img, mask)
+    return masked_image
+
+
+def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap, horizon_y, limits=(-0.4, 0.4)):
+    """
+    Finds an approximate lane using hough transform and returns the x and y co-ordinate pairs
+
+    :param img: The canny thresholded image
+    :param rho: Rho resolution
+    :param theta: The thetha resolution
+    :param threshold: The hough voting threshold
+    :param min_line_len: The houghlinesP value for minimum length beyond which a segment is considered as a line
+    :param max_line_gap: The houghlinesP value for maximum gap between two lines beyond which they are considered as
+    a seperate line
+    :param horizon_y: The horizon value
+    :param limits: The limits of the slope of the lane
+    :return: An numpy array of shape (4,2) that contains the 4 bounding boxes for the lanes, and the left and right
+    confidences
+    """
+    result = np.zeros(shape=(4,2), dtype=np.int32)
+
+    # Find the lines
+    lines = cv2.HoughLinesP(img, rho, theta, threshold, np.array([]),
+                            minLineLength=min_line_len, maxLineGap=max_line_gap)
+
+    # Consolidate the lines into two straight lanes
+    if lines is not None:
+        left_m = left_b = right_m = right_b = 0
+        left_num = right_num = 1e-5
+
+        # Loop through all the lines and find the slopes and intercepts
+        for line in lines:
+            for x1, y1, x2, y2 in line:
+                if x2 != x1:
+                    slope = (y2 - y1) / (x2 - x1)
+                    intercept = y2 - (slope * x2)
+                    if slope < limits[0]:
+                        left_m += slope
+                        left_b += intercept
+                        left_num += 1
+                    elif slope > limits[1]:
+                        right_m += slope
+                        right_b += intercept
+                        right_num += 1
+
+        (m1, b1) = (left_m / left_num, left_b / left_num)
+        (m2, b2) = (right_m / right_num, right_b / right_num)
+
+        if m1 and m1 != float('Inf') and b1 and b1 != float('Inf'):
+            result[0][0] = ((img.shape[0] * .9) - b1) / m1
+            result[0][1] = img.shape[0] * .9
+
+            result[1][0] = (horizon_y - b1) / m1
+            result[1][1] = horizon_y
+        else:
+            right_num = 0
+
+        if m2 and m2 != float('Inf') and b2 and b2 != float('Inf'):
+            result[2][0] = (horizon_y - b2) / m2
+            result[2][1] = horizon_y
+
+            result[3][0] = ((img.shape[0] * .9) - b2) / m2
+            result[3][1] = img.shape[0] * .9
+        else:
+            left_num = 0
+
+        return result, left_num, right_num
+
+
+def running_mean(img, vert_slices, wsize):
+    """
+    Computes the horizontal moving histogram of an image
+    :param img: The binary image (ch = 2)
+    :param vert_slices: Number of vertical slices
+    :param wsize: The window size
+    :return: The computed histograms
+    """
+    size = img.shape[0] / vert_slices
+    result = np.zeros(shape=(vert_slices, img.shape[1]), dtype=np.float)
+
+    for i in np.arange(vert_slices):
+        start = i * size
+        end = (i + 1) * size
+        vertical_mean = np.mean(img[start:end], axis=0)
+
+        for j in np.arange(wsize / 2):
+            vertical_mean = np.insert(vertical_mean, 0, vertical_mean[0])
+            vertical_mean = np.insert(vertical_mean, len(vertical_mean), vertical_mean[-1])
+
+        window_sum = np.cumsum(vertical_mean)
+        result[i, :] = (window_sum[wsize:] - window_sum[:-wsize]) / wsize
+
+    return result
+
+
+
