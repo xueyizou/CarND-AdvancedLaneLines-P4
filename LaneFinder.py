@@ -31,11 +31,13 @@ class HistogramLaneFinder:
         raw_markings = []
         self.markings = []
         dbg_intervals = []
+        dbg_confidences = []
         for i in np.arange(self.vertical_slices - 1, -1, -1):
             # Get the intervals and lane width from previous values
             intervals, lane_width, lane_width_confidence, left_confidence, right_confidence = \
                 self.__get_expected_interval_and_width(img.shape[1])
             dbg_intervals.append(intervals)
+            dbg_confidences.append([lane_width_confidence, left_confidence, right_confidence])
 
             # If we weren't able to find the lane width, take the given base value
             if lane_width is None:
@@ -82,18 +84,46 @@ class HistogramLaneFinder:
                 self.differences[i][1] = 0
             else:
                 if candidates[0] is not None:
-                    self.differences[i][0] = candidates[0] - np.mean(intervals[0])
+                    # Count the number of entries that we've not computed the lane marking
+                    num_zeros = 0
+                    for j in np.arange(i, self.vertical_slices - 1, 1):
+                        if self.differences[j][0] == 0:
+                            num_zeros += 1
+                        else:
+                            break
+
+                    # Split the difference evenly across them
+                    diff = candidates[0] - np.mean(intervals[0])
+                    for j in np.arange(i, self.vertical_slices - 1, 1):
+                        if self.differences[j][0] == 0:
+                            self.differences[j][0] = diff / num_zeros
+                        else:
+                            break
                 else:
                     self.differences[i][0] = self.differences[i - 1][0]
+
                 if candidates[1] is not None:
-                    self.differences[i][1] = candidates[1] - np.mean(intervals[1])
+                    # Count the number of entries that we've not computed the lane marking
+                    num_zeros = 0
+                    for j in np.arange(i, self.vertical_slices - 1, 1):
+                        if self.differences[j][1] == 0:
+                            num_zeros += 1
+                        else:
+                            break
+
+                    # Split the difference evenly across them
+                    diff = candidates[1] - np.mean(intervals[1])
+                    for j in np.arange(i, self.vertical_slices - 1, 1):
+                        if self.differences[j][1] == 0:
+                            self.differences[j][1] = diff / num_zeros
+                        else:
+                            break
                 else:
                     self.differences[i][1] = self.differences[i - 1][1]
 
             # Add to the global list
             raw_markings.append(found)
             self.markings.append(candidates)
-
 
         return self.markings
 
@@ -102,8 +132,12 @@ class HistogramLaneFinder:
         intervals = [[0, shape / 2], [shape / 2, shape]]
         lane_width = None
         lane_width_confidence = 300 - (len(self.markings) * 25)
-        left_confidence = 300 - (len(self.markings) * 25)
-        right_confidence = 300 - (len(self.markings) * 25)
+        if not len(self.markings):
+            left_confidence = 300
+            right_confidence = 300
+        else:
+            left_confidence = 100
+            right_confidence = 100
 
         # Search from the most recent
         left_found = right_found = False
@@ -118,10 +152,10 @@ class HistogramLaneFinder:
             if left_found and right_found:
                 break
             if not left_found:
-                left_confidence += 50
+                left_confidence += 25
             if not right_found:
-                right_confidence += 50
-            lane_width_confidence += 50
+                right_confidence += 25
+            lane_width_confidence += 25
 
         if left_found and right_found:
             lane_width = np.mean(intervals[1]) - np.mean(intervals[0])
@@ -139,20 +173,20 @@ class HistogramLaneFinder:
         answer = [None, None]
 
         if len(curr_finds):
-            if idx != (self.vertical_slices - 1):
-                # If this is not the first histogram (bottom row), test against the previous
-                # histogram values to find the correct markings
+            # If this is not the first histogram (bottom row), test against the previous
+            # histogram values to find the correct markings
+            if idx != self.vertical_slices - 1:
                 answer = self.__check_prev_value(curr_finds, curr_range, self.differences[idx + 1],
                                                  left_confidence, right_confidence)
-
-                # Cross verify the values against the lane width if we've both the sides
-                if answer[0] is not None and answer[1] is not None:
-                    lane_answer = self.__check_width(answer, lane_width, lane_width_confidence)
-                    if lane_answer != answer:
-                        answer = [None, None]
             else:
-                # If this is the bottom row, test against the lane width to find the correct markings
-                answer = self.__check_width(curr_finds, lane_width, lane_width_confidence)
+                answer = self.__check_prev_value(curr_finds, curr_range, [0, 0],
+                                                 left_confidence, right_confidence)
+
+            # Cross verify the values against the lane width if we've both the sides
+            if answer[0] is not None and answer[1] is not None:
+                lane_answer = self.__check_width(answer, lane_width, lane_width_confidence)
+                if lane_answer != answer:
+                    answer = [None, None]
 
         return answer
 
