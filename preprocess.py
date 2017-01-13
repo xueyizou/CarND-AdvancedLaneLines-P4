@@ -213,8 +213,8 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap, horizon_
         (m2, b2) = (right_m / right_num, right_b / right_num)
 
         if m1 and m1 != float('Inf') and b1 and b1 != float('Inf'):
-            result[0][0] = ((img.shape[0] * .9) - b1) / m1
-            result[0][1] = img.shape[0] * .9
+            result[0][0] = (img.shape[0] - b1) / m1
+            result[0][1] = img.shape[0]
 
             result[1][0] = (horizon_y - b1) / m1
             result[1][1] = horizon_y
@@ -225,8 +225,8 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap, horizon_
             result[2][0] = (horizon_y - b2) / m2
             result[2][1] = horizon_y
 
-            result[3][0] = ((img.shape[0] * .9) - b2) / m2
-            result[3][1] = img.shape[0] * .9
+            result[3][0] = (img.shape[0] - b2) / m2
+            result[3][1] = img.shape[0]
         else:
             left_num = 0
 
@@ -245,8 +245,8 @@ def running_mean(img, vert_slices, wsize):
     result = np.zeros(shape=(vert_slices, img.shape[1]), dtype=np.float)
 
     for i in np.arange(vert_slices):
-        start = i * size
-        end = (i + 1) * size
+        start = int(i * size)
+        end = int((i + 1) * size)
         vertical_mean = np.mean(img[start:end], axis=0)
 
         for j in np.arange(wsize / 2):
