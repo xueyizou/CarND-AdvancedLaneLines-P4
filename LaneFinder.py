@@ -4,6 +4,7 @@ import calib
 import preprocess
 from glob import glob
 import matplotlib.pyplot as plt
+import csv
 
 
 class HistogramLaneFinder:
@@ -190,7 +191,9 @@ class HistogramLaneFinder:
 class LaneFinder:
     def __init__(self, base_lane_width=700, cam_calibration=None, draw=False):
         self.constants = {
-            'HIST_VERT_SLICES': 20
+            'HIST_VERT_SLICES': 20,
+            'FIT_ERR_THRESHOLD': 5000,
+            'FIT_AVG_WEIGHT': 0.5
         }
 
         # The camera calibration parameters
@@ -213,20 +216,29 @@ class LaneFinder:
 
         # The currently used ROI
         self.ROI = None
+        self.roi_stable = False
 
         # The current fit values
         self.fit_values = [None, None]
+        self.fit_confidence = 0
+        self.fit_err = 0
+
+        # The current bottom lane start position
+        self.lane_bottom = [None, None]
+        self.lane_confidence = None
 
         # Diagnostics
+        self.font = cv2.FONT_HERSHEY_COMPLEX
         self.draw = draw
+        self.cnt = 0
+        self.show = None
+        self.plot = None
+        self.csvfile = open('project_out_images/log.csv', 'w')
+        self.csv_writer = csv.writer(self.csvfile, delimiter=',')
 
     def process(self, frame):
         # Save the shape of the original image
         self.img_sz = frame.shape
-
-        # Initialize the frame memory with the frame shape
-        if self.frame_memory is None:
-            self.frame_memory = np.zeros(shape=(self.frame_mem_max, frame.shape[0], frame.shape[1]), dtype = np.uint8)
 
         # Compute the transformation co-ordinates
         transform_dst = np.array([
@@ -236,10 +248,14 @@ class LaneFinder:
             [frame.shape[1], frame.shape[0]]
         ])
 
-        # Find a probable region of interest using canny and hough transform along with the confidence of the ROI
-        self.__find_roi_using_hough(frame)
+        # Find a probable region of interest
+        self.__find_roi(frame)
 
-        # Mask the image
+        # Initialize the frame memory with the frame shape with ROI is unstable
+        if not self.roi_stable or self.frame_memory is None:
+            self.frame_memory = np.zeros(shape=(self.frame_mem_max, frame.shape[0], frame.shape[1]), dtype=np.uint8)
+
+        # Mark the ROI in the image
         marked = np.copy(frame)
         cv2.line(marked,
                  (self.ROI[0][0], self.ROI[0][1]),
@@ -249,6 +265,18 @@ class LaneFinder:
                  (self.ROI[2][0], self.ROI[2][1]),
                  (self.ROI[3][0], self.ROI[3][1]),
                  (255, 0, 0), 10)
+        cv2.line(marked,
+                 (self.ROI[0][0], self.ROI[0][1]),
+                 (self.ROI[3][0], self.ROI[3][1]),
+                 (255, 0, 0), 10)
+        cv2.line(marked,
+                 (self.ROI[1][0], self.ROI[1][1]),
+                 (self.ROI[2][0], self.ROI[2][1]),
+                 (255, 0, 0), 10)
+        str_conf = 'ROI Stable = ' + str(self.roi_stable)
+        cv2.putText(marked, str_conf, (30, 60), self.font, 1, (255, 0, 0), 2)
+        str_conf = 'Lane Width = ' + str(self.lane_width)
+        cv2.putText(marked, str_conf, (30, 90), self.font, 1, (255, 0, 0), 2)
 
         # Apply the distortion correction to the raw image.
         if self.cam_calibration is not None:
@@ -263,19 +291,24 @@ class LaneFinder:
         # Use color transforms, gradients, etc., to create a thresholded binary image.
         binary = self.__threshold_image(birdseye, self.draw)
 
-        # # Add the image to the frame memory
-        # self.frame_memory[self.frame_idx] = binary
-        # self.frame_avail[self.frame_idx] = True
-        # self.frame_idx = (self.frame_idx + 1) % self.frame_mem_max
-        #
-        # # Compute a motion blur across the frame memory
-        # motion = np.zeros(shape=(self.img_sz[0], self.img_sz[1]), dtype=np.uint8)
-        # for idx, img in enumerate(self.frame_memory):
-        #     if self.frame_avail[idx]:
-        #         motion[(img > .5)] = 1
+        # Add the image to the frame memory
+        self.frame_memory[self.frame_idx] = binary
+        self.frame_avail[self.frame_idx] = True
+        # Allow more images to be added only after the ROI is stable.
+        if self.roi_stable:
+            self.frame_idx = (self.frame_idx + 1) % self.frame_mem_max
 
-        # Search for the lanes using sliding windows
-        lane_markings = self.hist_finder.find(binary, self.lane_width)
+        # Compute a motion blur across the frame memory
+        motion = np.zeros(shape=(self.img_sz[0], self.img_sz[1]), dtype=np.uint8)
+        for idx, img in enumerate(self.frame_memory):
+            if self.frame_avail[idx]:
+                motion[(img > .5)] = 1
+
+        if self.fit_err > self.constants['FIT_ERR_THRESHOLD'] or not self.roi_stable:
+            # Search for the lanes using sliding windows
+            lane_markings = self.hist_finder.find(binary, self.lane_width)
+        else:
+            lane_markings = self.__get_markings_from_fit()
 
         # Draw boxes for each found marking
         box_marked = np.copy(birdseye)
@@ -284,19 +317,46 @@ class LaneFinder:
             start = int(size * (self.constants['HIST_VERT_SLICES'] - idx - 1))
             end = int(size * (self.constants['HIST_VERT_SLICES'] - idx))
             if marking[0] is not None:
-                cv2.rectangle(box_marked, (int(marking[0]) - 50, end), (int(marking[0]) + 50, start), (255), 10)
+                cv2.rectangle(box_marked, (int(marking[0]) - 100, end), (int(marking[0]) + 100, start), (255), 10)
             if marking[1] is not None:
-                cv2.rectangle(box_marked, (int(marking[1]) - 50, end), (int(marking[1]) + 50, start), (255), 10)
+                cv2.rectangle(box_marked, (int(marking[1]) - 100, end), (int(marking[1]) + 100, start), (255), 10)
 
         # Get a fit from the lane markings
-        left_fit, right_fit, left_mask, right_mask = self.__get_fit(binary, lane_markings)
+        confidences, fits, masks = self.__get_fit(binary, lane_markings)
 
         # Smoothen the fit
-        if left_fit is not None:
-            self.fit_values[0] = left_fit
+        for i in np.arange(2):
+            # If we don't have a value from previous frame, just use the current one and hope for the best
+            # If the ROI is not stable, then also just use the current one and don't smoothen
+            if self.fit_values[i] is None or not self.roi_stable:
+                self.fit_err = 0
+                self.fit_values[i] = fits[i]
+            else:
+                # Check if we've got a valid value now
+                if fits[i] is not None:
+                    # Calculate the error from the previous frame
+                    self.fit_err = np.mean((self.fit_values[i] - fits[i]) ** 2)
 
-        if right_fit is not None:
-            self.fit_values[1] = right_fit
+                    # If error is within expected values, then average the fit
+                    if self.fit_err < self.constants['FIT_ERR_THRESHOLD']:
+                        # Average out based on the confidence
+                        prev_confidence = self.constants['FIT_AVG_WEIGHT'] + \
+                                          ((1 - self.constants['FIT_AVG_WEIGHT']) * self.fit_confidence /
+                                           (self.fit_confidence + confidences[i]))
+                        curr_confidence = (1 - self.constants['FIT_AVG_WEIGHT']) * \
+                                          (confidences[i] / (self.fit_confidence + confidences[i]))
+                        self.fit_values[i] = (self.fit_values[i] * prev_confidence) + \
+                                              (fits[i] * curr_confidence)
+
+        # Update the confidences
+        if fits[0] is not None and fits[1] is not None:
+            prev_confidence = self.constants['FIT_AVG_WEIGHT'] + \
+                              ((1 - self.constants['FIT_AVG_WEIGHT']) * self.fit_confidence /
+                               (self.fit_confidence + np.mean(confidences)))
+            curr_confidence = (1 - self.constants['FIT_AVG_WEIGHT']) * np.mean(confidences) / \
+                              (self.fit_confidence + np.mean(confidences))
+            self.fit_confidence = (self.fit_confidence * prev_confidence) + \
+                                  (np.mean(confidences) * curr_confidence)
 
         # Draw the lanes
         if self.fit_values[0] is not None and self.fit_values[1] is not None:
@@ -308,6 +368,30 @@ class LaneFinder:
         overlay_perspective = perspective_transformer.inverse_transform(overlay)
         result = cv2.addWeighted(overlay_perspective, .7, frame, 1., 0.)
 
+        # Compute the curvature
+        curvature = self.__compute_curvature(np.mean(self.fit_values, 0), self.img_sz[0] / 2)
+        str_curv = 'Curvature = ' + str(np.round(curvature, 2))
+        cv2.putText(result, str_curv, (30, 60), self.font, 1, (255, 0, 0), 2)
+
+        # Compute the offset from the middle
+        dist_offset = (((self.lane_bottom[1] - self.lane_bottom[0]) - (self.img_sz[1] / 2)) /
+                       (self.lane_bottom[1] - self.lane_bottom[0]))
+        dist_offset = np.round(dist_offset, 2)
+        str_offset = 'Lane deviation: ' + str(dist_offset) + '%.'
+        cv2.putText(result, str_offset, (30, 90), self.font, 1, (255, 0, 0), 2)
+
+        # Write up the confidence
+        str_conf = 'Confidence = ' + str(np.round(self.fit_confidence, 2))
+        cv2.putText(result, str_conf, (30, 120), self.font, 1, (255, 0, 0), 2)
+
+        # Raw confidence
+        str_conf = 'Raw confidence: Left = ' + str(np.round(confidences[0], 2)) + '; Right = ' + str(np.round(confidences[1], 2))
+        cv2.putText(result, str_conf, (30, 150), self.font, 1, (255, 0, 0), 2)
+
+        # Error in fit values
+        str_err = 'Error in fit values = ' + str(np.round(self.fit_err, 2))
+        cv2.putText(result, str_err, (30, 180), self.font, 1, (255, 0, 0), 2)
+
         # Show off the plots if required
         if self.draw:
             fig = plt.figure()
@@ -317,7 +401,7 @@ class LaneFinder:
             fig.add_subplot(3,4,4), plt.imshow(birdseye), plt.title('Bird\'s view')
             fig.add_subplot(3,4,5), plt.imshow(binary, cmap='gray'), plt.title('Thresholded')
             fig.add_subplot(3,4,7), plt.imshow(box_marked, cmap='gray'), plt.title('Box Marked')
-            fig.add_subplot(3,4,8), plt.imshow(left_mask + right_mask, cmap='gray'), plt.title('Lane pixels')
+            fig.add_subplot(3,4,8), plt.imshow(masks[0] + masks[1], cmap='gray'), plt.title('Lane pixels')
             fig.add_subplot(3,4,9), plt.imshow(overlay), plt.title('Overlay')
             fig.add_subplot(3,4,10), plt.imshow(overlay_perspective), plt.title('Perspective overlay')
             fig.add_subplot(3,4,11), plt.imshow(result), plt.title('Result')
@@ -329,11 +413,36 @@ class LaneFinder:
         diagScreen[0:240, 1280:1600] = cv2.resize(marked, (320, 240), interpolation=cv2.INTER_AREA)
         diagScreen[240:480, 1280:1600] = cv2.resize(birdseye, (320, 240), interpolation=cv2.INTER_AREA)
         diagScreen[480:720, 1280:1600] = cv2.resize(box_marked, (320, 240), interpolation=cv2.INTER_AREA)
-        diagScreen[720:960, 0:320] = cv2.resize(overlay, (320, 240), interpolation=cv2.INTER_AREA)
-        diagScreen[720:960, 320:640] = cv2.resize(overlay_perspective, (320, 240), interpolation=cv2.INTER_AREA)
-        return diagScreen
+        diagScreen[720:960, 0:320] = cv2.cvtColor(cv2.resize(motion, (320, 240), interpolation=cv2.INTER_AREA), cv2.COLOR_GRAY2RGB) * 255
+        diagScreen[720:960, 320:640] = cv2.cvtColor(cv2.resize(masks[0] + masks[1], (320, 240), interpolation=cv2.INTER_AREA), cv2.COLOR_GRAY2RGB) * 255
+        # diagScreen[720:960, 640:960] = cv2.cvtColor(cv2.resize(masks[1], (320, 240), interpolation=cv2.INTER_AREA), cv2.COLOR_GRAY2RGB) * 255
+        diagScreen[720:960, 960:1280] = cv2.resize(overlay, (320, 240), interpolation=cv2.INTER_AREA)
+        diagScreen[720:960, 1280:1600] = cv2.resize(overlay_perspective, (320, 240), interpolation=cv2.INTER_AREA)
+        self.csv_writer.writerow([])
+
+        bgr_diag = cv2.cvtColor(diagScreen, cv2.COLOR_RGB2BGR)
+        cv2.imwrite('project_out_images/'+str(self.cnt)+'.jpg', bgr_diag)
+        self.cnt += 1
+
+        return result
 
     # ------------- PRIVATE FUNCTIONS ------------- #
+    def __get_markings_from_fit(self):
+        """
+        Gets markings from a fit
+        :return:
+        """
+        # Generate the x and y for each lane boundary
+        right_y = np.arange(self.constants['HIST_VERT_SLICES'] - 1, -1, -1) * self.img_sz[0] / self.constants['HIST_VERT_SLICES']
+        right_x = self.fit_values[1][0] * right_y ** 2 + self.fit_values[1][1] * right_y + self.fit_values[1][2]
+
+        left_y = np.arange(self.constants['HIST_VERT_SLICES'] - 1, -1, -1) * self.img_sz[0] / self.constants['HIST_VERT_SLICES']
+        left_x = self.fit_values[0][0] * left_y ** 2 + self.fit_values[0][1] * left_y + self.fit_values[0][2]
+
+        markings = [[left_x[i], right_x[i]] for i in np.arange(self.constants['HIST_VERT_SLICES'])]
+
+        return markings
+
     def __draw_overlay(self, img, birdseye):
         """
         Draws the lanes specified by the fits on top of the given image
@@ -343,11 +452,21 @@ class LaneFinder:
         :return: Final image
         """
         # Generate the x and y for each lane boundary
-        right_y = np.arange(11) * img.shape[0] / 10
+        right_y = np.arange(11) * self.img_sz[0] / 10
         right_x = self.fit_values[1][0] * right_y ** 2 + self.fit_values[1][1] * right_y + self.fit_values[1][2]
 
-        left_y = np.arange(11) * img.shape[0] / 10
+        left_y = np.arange(11) * self.img_sz[0] / 10
         left_x = self.fit_values[0][0] * left_y ** 2 + self.fit_values[0][1] * left_y + self.fit_values[0][2]
+
+        # Save the bottom values
+        if self.lane_bottom[0] is not None:
+            self.lane_bottom[0] = (self.lane_bottom[0] * .9) + (left_x[-1] * .1)
+        else:
+            self.lane_bottom[0] = left_x[-1]
+        if self.lane_bottom[1] is not None:
+            self.lane_bottom[1] = (self.lane_bottom[1] * .9) + (right_x[-1] * .1)
+        else:
+            self.lane_bottom[1] = right_x[-1]
 
         # Cast the points into a form that's easy for cv2.fillPoly
         temp = np.zeros_like(birdseye).astype(np.uint8)
@@ -361,11 +480,6 @@ class LaneFinder:
         # right_bot = self.__evaluate_curve(self.proc_img_size[0], right_fit)
         # val_center = (left_bot + right_bot) / 2.0
         # self.lane_width = right_bot - left_bot
-
-        # Compute the offset from the middle
-        # dist_offset = val_center - self.proc_img_size[1] / 2
-        # dist_offset = np.round(dist_offset / 2.81362, 2)
-        # str_offset = 'Lane deviation: ' + str(dist_offset) + ' cm.'
 
         # If we are deviating too much from the middle, make it red
         # if dist_offset > 150:
@@ -413,21 +527,30 @@ class LaneFinder:
             start = int(size * (self.constants['HIST_VERT_SLICES'] - idx - 1))
             end = int(size * (self.constants['HIST_VERT_SLICES'] - idx))
             if marking[0] is not None:
-                pts = np.array([[[int(marking[0]) - 50, end],
-                                [int(marking[0]) - 50, start],
-                                [int(marking[0]) + 50, start],
-                                [int(marking[0]) + 50, end]]], dtype=np.int32)
+                pts = np.array([[[int(marking[0]) - 100, end],
+                                [int(marking[0]) - 100, start],
+                                [int(marking[0]) + 100, start],
+                                [int(marking[0]) + 100, end]]], dtype=np.int32)
                 cv2.fillPoly(left_image, pts, 255)
             if marking[1] is not None:
-                pts = np.array([[[int(marking[1]) - 50, end],
-                             [int(marking[1]) - 50, start],
-                             [int(marking[1]) + 50, start],
-                             [int(marking[1]) + 50, end]]], dtype=np.int32)
+                pts = np.array([[[int(marking[1]) - 100, end],
+                             [int(marking[1]) - 100, start],
+                             [int(marking[1]) + 100, start],
+                             [int(marking[1]) + 100, end]]], dtype=np.int32)
                 cv2.fillPoly(right_image, pts, 255)
 
         # apply the masks
         left_image = cv2.bitwise_and(left_image, img)
         right_image = cv2.bitwise_and(right_image, img)
+
+        # Recompute the bottom slice
+        start = int(size * (self.constants['HIST_VERT_SLICES'] - 1))
+        end = int(size * (self.constants['HIST_VERT_SLICES']))
+
+        if len(np.argwhere(left_image > .5)) < 5000 and self.lane_bottom[0] is not None:
+            left_image[start:end, self.lane_bottom[0] - 10:self.lane_bottom[0] + 10] = 1
+        if len(np.argwhere(right_image > .5)) < 5000 and self.lane_bottom[1] is not None:
+            right_image[start:end, self.lane_bottom[1] - 10:self.lane_bottom[1] + 10] = 1
 
         # Extract the left and right points
         left_fit = right_fit = None
@@ -443,7 +566,10 @@ class LaneFinder:
             all_y = right_values.T[1]
             right_fit = np.polyfit(all_x, all_y, 2)
 
-        return left_fit, right_fit, left_image, right_image
+        # Calculate confidence as compared to the maximum number of image pixels we could have got
+        confidences = [len(left_values) / (100 * img.shape[0]), len(right_values) / (100 * img.shape[0])]
+
+        return confidences, [left_fit, right_fit], [left_image, right_image]
 
     def __find_prob_markings(self, markings):
         answer = None
@@ -461,7 +587,7 @@ class LaneFinder:
 
         return answer
 
-    def __find_roi_using_hough(self, img, fig=None):
+    def __find_roi(self, img, fig=None):
         # If there is an existing fit, then use that to find the ROI
         if self.fit_values[0] is not None and self.fit_values[1] is not None:
             # Get the fit values at start and end to compute the ROI for the next frame
@@ -470,26 +596,18 @@ class LaneFinder:
             right_bot_x = self.__evaluate_curve(img.shape[0], self.fit_values[1])
             right_top_x = self.__evaluate_curve(0, self.fit_values[1])
 
-            # Calculate the corrections directly for the bottom locations
-            left_bot_corr = (left_bot_x - (self.img_sz[1] * 0.1))
-            right_bot_corr = (right_bot_x - (self.img_sz[1] * 0.9))
-
-            # The top locations are a lot more sensitive, so we'll calculate only if they
-            # are beyond a bound
-            if 0 <= left_top_x <= (self.img_sz[1] * 0.2):
-                left_top_corr = 0
-            else:
-                left_top_corr = (left_top_x - (self.img_sz[1] * 0.1))
-            if (self.img_sz[1] * 0.8) <= right_top_x <= (self.img_sz[1] * 1.0):
-                right_top_corr = 0
-            else:
-                right_top_corr = (right_top_x - (self.img_sz[1] * 0.9))
+            # Calculate the correction
+            corr_lef = left_top_x - left_bot_x
+            corr_right = right_top_x - right_bot_x
 
             # Update the ROI
-            self.ROI[0][0] += left_bot_corr * 0.5
-            self.ROI[1][0] += left_top_corr * 0.15
-            self.ROI[2][0] += right_top_corr * 0.15
-            self.ROI[3][0] += right_bot_corr * 0.5
+            self.roi_stable = True
+            if np.abs(corr_lef) > (self.img_sz[1] * 0.1):
+                self.ROI[1][0] += (left_top_x - left_bot_x) * 0.15
+                self.roi_stable = False
+            if np.abs(corr_right) > (self.img_sz[1] * 0.1):
+                self.ROI[2][0] += (right_top_x - right_bot_x) * 0.15
+                self.roi_stable = False
 
             # Update the lane width
             self.lane_width = right_bot_x - left_bot_x
@@ -504,7 +622,7 @@ class LaneFinder:
                                 [self.img_sz[1] * 0.6, self.img_sz[0] * 0.65],
                                 [self.img_sz[1] * 1.0, self.img_sz[0] * 1.0]])
                 roi = preprocess.region_of_interest(cny, np.int32([ROI]))
-                verts, left_conf, right_conf = preprocess.hough_lines(roi, 1, np.pi/48, 50, 1, 60, ROI[1][1])
+                verts = preprocess.hough_lines(roi, 1, np.pi/48, 50, 1, 60, ROI[1][1])
 
                 # If we've not found the lanes
                 if verts[0][1] == 0 or verts[1][1] == 0 or verts[2][1] == 0 or verts[3][1] == 0:
@@ -533,6 +651,16 @@ class LaneFinder:
                 self.ROI = self.ROI.astype(np.int)
 
     # ------------- STATIC FUNCTIONS ------------- #
+    @staticmethod
+    def __compute_curvature(pol_a, y_pt):
+        """
+        Computes the curvature given a line fit
+        """
+        A = pol_a[0]
+        B = pol_a[1]
+        result = (1 + (2 * A * y_pt + B) ** 2) ** 1.5 / 2 / A
+        return result
+
     @staticmethod
     def __evaluate_curve(y, fit):
         """
@@ -627,7 +755,7 @@ if __name__ == "__main__":
 
     from moviepy.editor import VideoFileClip
     ld = LaneFinder(cam_calibration=calibration, draw=False)
-    project_output = 'test.mp4'
+    project_output = 'project_video_out.mp4'
     clip1 = VideoFileClip('project_video.mp4')
     project_clip = clip1.fl_image(ld.process)
     project_clip.write_videofile(project_output, audio=False)

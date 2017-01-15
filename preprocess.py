@@ -218,8 +218,6 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap, horizon_
 
             result[1][0] = (horizon_y - b1) / m1
             result[1][1] = horizon_y
-        else:
-            right_num = 0
 
         if m2 and m2 != float('Inf') and b2 and b2 != float('Inf'):
             result[2][0] = (horizon_y - b2) / m2
@@ -227,10 +225,8 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap, horizon_
 
             result[3][0] = (img.shape[0] - b2) / m2
             result[3][1] = img.shape[0]
-        else:
-            left_num = 0
 
-        return result, left_num, right_num
+        return result
 
 
 def running_mean(img, vert_slices, wsize):
