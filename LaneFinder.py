@@ -18,11 +18,12 @@ class HistogramLaneFinder:
         # The shape of the image
         self.size = None
 
-    def find(self, img, base_lane_width):
+    def find(self, img, base_lane_width, lane_width_confident):
         """
         Finds lane fit equations in the 2nd degree from a bird's eye view of the road
         :param img: Bird's eye view of the road, where the lane lines are parallel
         :param base_lane_width: The lane width at the base
+        :param lane_width_confident: A boolean to say if the application is confident of it's lane width
         :return: Left and right fit equations
         """
         # Save the shape
@@ -41,7 +42,7 @@ class HistogramLaneFinder:
         for i in np.arange(self.vertical_slices - 1, -1, -1):
             # Get the intervals and lane width from previous values
             intervals, lane_width, lane_width_confidence, left_confidence, right_confidence = \
-                self.__get_expected_interval_and_width(img.shape[1])
+                self.__get_expected_interval_and_width(img.shape[1], lane_width_confident)
             dbg_intervals.append(intervals)
             dbg_confidences.append([lane_width_confidence, left_confidence, right_confidence])
 
@@ -91,10 +92,13 @@ class HistogramLaneFinder:
         return self.markings
 
     # ------------- STATIC FUNCTIONS ------------- #
-    def __get_expected_interval_and_width(self, shape):
+    def __get_expected_interval_and_width(self, shape, confident):
         intervals = [[0, shape / 2], [shape / 2, shape]]
         lane_width = None
-        lane_width_confidence = 100
+        if confident:
+            lane_width_confidence = 0
+        else:
+            lane_width_confidence = 100
         left_confidence = 100
         right_confidence = 100
 
@@ -114,7 +118,10 @@ class HistogramLaneFinder:
                 left_confidence += 25
             if not right_found:
                 right_confidence += 25
-            lane_width_confidence += 50
+            if confident:
+                lane_width_confidence += 25
+            else:
+                lane_width_confidence += 50
 
         if left_found and right_found:
             lane_width = np.mean(intervals[1]) - np.mean(intervals[0])
@@ -224,6 +231,7 @@ class LaneFinder:
         self.fit_err = 0
 
         # The current bottom lane start position
+        self.find_mode = 'hist'
         self.lane_bottom = [None, None]
         self.lane_confidence = None
 
@@ -306,9 +314,11 @@ class LaneFinder:
 
         if self.fit_err > self.constants['FIT_ERR_THRESHOLD'] or not self.roi_stable:
             # Search for the lanes using sliding windows
-            lane_markings = self.hist_finder.find(binary, self.lane_width)
+            lane_markings = self.hist_finder.find(motion, self.lane_width, self.roi_stable)
+            self.find_mode = 'hist'
         else:
             lane_markings = self.__get_markings_from_fit()
+            self.find_mode = 'prev'
 
         # Draw boxes for each found marking
         box_marked = np.copy(birdseye)
@@ -322,7 +332,7 @@ class LaneFinder:
                 cv2.rectangle(box_marked, (int(marking[1]) - 100, end), (int(marking[1]) + 100, start), (255), 10)
 
         # Get a fit from the lane markings
-        confidences, fits, masks = self.__get_fit(binary, lane_markings)
+        confidences, fits, masks = self.__get_fit(motion, lane_markings)
 
         # Smoothen the fit
         for i in np.arange(2):
@@ -338,7 +348,7 @@ class LaneFinder:
                     self.fit_err = np.mean((self.fit_values[i] - fits[i]) ** 2)
 
                     # If error is within expected values, then average the fit
-                    if self.fit_err < self.constants['FIT_ERR_THRESHOLD']:
+                    if self.fit_err < self.constants['FIT_ERR_THRESHOLD'] and confidences[i] > 0.05:
                         # Average out based on the confidence
                         prev_confidence = self.constants['FIT_AVG_WEIGHT'] + \
                                           ((1 - self.constants['FIT_AVG_WEIGHT']) * self.fit_confidence /
@@ -347,6 +357,10 @@ class LaneFinder:
                                           (confidences[i] / (self.fit_confidence + confidences[i]))
                         self.fit_values[i] = (self.fit_values[i] * prev_confidence) + \
                                               (fits[i] * curr_confidence)
+                    elif self.find_mode =='hist' and self.fit_err < (2 * self.constants['FIT_ERR_THRESHOLD']) \
+                            and confidences[i] > 0.05:
+                        self.fit_err = 0
+                        self.fit_values[i] = fits[i]
 
         # Update the confidences
         if fits[0] is not None and fits[1] is not None:
@@ -421,7 +435,9 @@ class LaneFinder:
         self.csv_writer.writerow([])
 
         bgr_diag = cv2.cvtColor(diagScreen, cv2.COLOR_RGB2BGR)
-        cv2.imwrite('project_out_images/'+str(self.cnt)+'.jpg', bgr_diag)
+        cv2.imwrite('challenge_out_images/'+str(self.cnt)+'.jpg', bgr_diag)
+        frame_diag = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        cv2.imwrite('challenge_images/' + str(self.cnt) + '.jpg', frame_diag)
         self.cnt += 1
 
         return result
@@ -600,14 +616,31 @@ class LaneFinder:
             corr_lef = left_top_x - left_bot_x
             corr_right = right_top_x - right_bot_x
 
+            # Check if the ROI needs a translation or a shape change
+            if (self.img_sz[1] - right_top_x) < (self.img_sz[1] * 0.1):
+                corr_lef -= self.img_sz[1] * 0.05
+                corr_right -= self.img_sz[1] * 0.05
+            if left_top_x > (self.img_sz[1] * 0.1):
+                corr_lef += self.img_sz[1] * 0.05
+                corr_right += self.img_sz[1] * 0.05
+
             # Update the ROI
-            self.roi_stable = True
-            if np.abs(corr_lef) > (self.img_sz[1] * 0.1):
-                self.ROI[1][0] += (left_top_x - left_bot_x) * 0.15
-                self.roi_stable = False
-            if np.abs(corr_right) > (self.img_sz[1] * 0.1):
-                self.ROI[2][0] += (right_top_x - right_bot_x) * 0.15
-                self.roi_stable = False
+            if self.roi_stable:
+                self.roi_stable = True
+                if (self.img_sz[1] * 0.15) < np.abs(corr_lef) < (self.img_sz[1] * 0.2):
+                    self.ROI[1][0] += (left_top_x - left_bot_x) * 0.05
+                    self.roi_stable = False
+                if (self.img_sz[1] * 0.15) < np.abs(corr_lef) < (self.img_sz[1] * 0.2):
+                    self.ROI[2][0] += (right_top_x - right_bot_x) * 0.05
+                    self.roi_stable = False
+            else:
+                self.roi_stable = True
+                if np.abs(corr_lef) > (self.img_sz[1] * 0.1):
+                    self.ROI[1][0] += (left_top_x - left_bot_x) * 0.15
+                    self.roi_stable = False
+                if np.abs(corr_right) > (self.img_sz[1] * 0.1):
+                    self.ROI[2][0] += (right_top_x - right_bot_x) * 0.15
+                    self.roi_stable = False
 
             # Update the lane width
             self.lane_width = right_bot_x - left_bot_x
@@ -746,7 +779,7 @@ if __name__ == "__main__":
 
     # Find the lanes
     # from scipy.misc import imread, imsave
-    # images = glob('test_images/test*')
+    # images = glob('test_images/*')
     # for idx, img_path in enumerate(images):
     #     img = imread(img_path)
     #     ld = LaneFinder(cam_calibration=calibration, draw=True)
