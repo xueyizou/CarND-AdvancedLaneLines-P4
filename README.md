@@ -268,3 +268,105 @@ And corresponding, this is how the bird's eye view changes
 ![](doc_imgs/tracking_bird.gif)
 
 ### Motion Blur
+The next form of tracking is to stitch the threshold images together
+to form an image blur, which will allow us to detect the broken lanes
+much better. We simply take the previous few thresholded frames and lay them one
+over another to get a more denser frame.
+
+There is one major disadvantage here. We cannot do this when the ROI
+changes. Since the motion blur happens in the birdseye domain, we want
+the perspective transform to be stable. Only then we can have motion
+blur. So we have a flag to find when the ROI is stable, and do the motion
+blur only when the ROI is stable. This is the result of the motion blur
+applied over few frames after the ROI was stable.
+
+![](doc_imgs/tracking_motion.gif)
+
+As you can see, the motion creates an almost connected line, which will
+make the histogram search as well as the tracking fit algorithm explained
+in the next section much easier.
+
+The code for this is available in the process function of the LaneFinder
+class.
+
+### Lane pixels around previous fit
+Given that we already have a fit, we can simply try to find the lane pixels
+around existing fit, rather than to do a histogram search from scratch.
+This is implemented simply by just expanding to a fixed offset around
+the previous fit values and directly computing a polynomial fit of all
+the pixels found inside this range.
+
+![](doc_imgs/tracking_overlay.gif)
+
+We can see that once we go into the tracking mode, we just mask the pixels
+using a simple heuristic and create a fit. This speeds up the implementation
+many fold thus making it more real time.
+
+### Smoothening the fit
+This is perhaps the single MOST **IMPORTANT** thing that we do in tracking.
+Everything from dynamic ROI, to lane pixel finding depends on the fit values
+from the previous frame. If by chance, the system detects an incorrect
+fit in one of the frames, it could screw up the ROI and thus put the
+system into a position where it cannot recover.
+
+We consider how close the newly found fit is to the previously found
+fit values. We also consider the **confidence of the fit**.
+
+The confidence of the fit is measured by the number of pixels that had
+voted for the fit. If this confidence falls below a certain threshold (
+ too few pixels voting, which could cause the fit to take weird shapes,
+ because it does not have enough data for the fit), we reuse the old fit
+ values.
+
+We also consider how different the current fit is from the older fit. If
+it's within a margin, then we take an weighted average of the current
+fit and the older fit, where the weight is specified by the confidence
+of the current fit. The higher the confidence of the current fit, the more
+weight it gets over the previous fit. We cap the current fit weight to 50%,
+thereby ensuring that there is still a low pass filter that happens.
+
+If the current fit is too different from the previous fit, then we go into
+recovery mode which is explained below.
+
+This part of the code is available in the Process method of the LaneFinder
+class.
+
+## Recovery
+There will be many cases where the fit is poorly found. This could either
+be because the number of pixels voting for either lane's fit is too low, or
+if the newly found fit is too different from the previous fit.
+
+In either of these cases, the system will revert to a histogram approach
+to finding the lane lines rather than to use the previous fit values.
+
+![](doc_imgs/recovery.gif)
+
+Here, after a few frames in a difficult section of the video, the lane
+confidence goes too low, so the system reverts in between for a histogram
+search for a couple of frames, before coming back to tracking.
+
+## Final Project Video
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=https://youtu.be/Rry9gmfyXyU
+" target="_blank"><img src="http://img.youtube.com/vi/https://youtu.be/Rry9gmfyXyU/0.jpg"
+alt="Final Project Video" width="240" height="180" border="10" /></a>
+
+## Introspection
+### Challenge videos
+The Challenge video is especially tricky owing to the road being white.
+This algorithm suffers in thresholding and we need to look at better
+thresholding methods to extract the lane pixels more than anything else.
+Especially the presence of a anomaly on the road that's picked up by the
+Sobel edge detector plays havoc on the algorithm. This needs more time.
+
+The system is able to manage the harder challenge for a few frames before
+ the ROI goes haywire. Much more control and precision is needed in the
+ ROI dynamics that's currently beyond this algorithm.
+
+### General thoughts
+Each project has been increasingly challenging so far. And every time
+I feel that i've crossed a major hurdle, the next one is even higher.
+It's been a fantastic learning experience so far.
+
+## Credits
+* The slack community for all the wonderful help
+

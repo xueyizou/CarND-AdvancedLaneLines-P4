@@ -4,23 +4,44 @@ import cv2
 
 class PerspectiveTransformer:
     def __init__(self, src, dst):
+        """
+        Initializes the perspective transform with a set of source and destination points
+
+        :param src: Source points
+        :param dst: Desination points
+        """
         self.src = src
         self.dst = dst
         self.M = cv2.getPerspectiveTransform(src, dst)
         self.M_inv = cv2.getPerspectiveTransform(dst, src)
 
     def transform(self, img):
+        """
+        Transforms an image from source to destination
+
+        :param img: Image to be transformed
+        :return: Transformed images
+        """
         return cv2.warpPerspective(img, self.M, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
 
     def inverse_transform(self, img):
+        """
+        Transforms an image from destination to source
+        :param img: Image to be transformed
+        :return: Transformed image
+        """
         return cv2.warpPerspective(img, self.M_inv, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
 
 
 class Sobel:
+    """
+    Static class to implement all of Sobel methods
+    """
     @staticmethod
     def absolute_thresh(img, orientation='x', sobel_kernel=3, threshold=(0, 255)):
         """
         Computes the absolute threshold of an image, either in the x or in the y direction
+
         :param img: The image to be processed
         :param orientation: Orientation of the sobel processing ('x' or 'y'), by default it's 'x'
         :param sobel_kernel: The size of the sobel kernel. Larger the size, the result is more smoothened. By default
@@ -50,6 +71,7 @@ class Sobel:
     def magnitude_thresh(img, sobel_kernel=3, threshold=(0, 255)):
         """
         Computes the magnitude threshold of an image
+
         :param img: The image to be processed
         :param sobel_kernel: The size of the sobel kernel. Larger the size, the result is more smoothened. By default
         it's 3.
@@ -73,6 +95,7 @@ class Sobel:
     def direction_threshold(img, sobel_kernel=3, threshold=(0, np.pi / 2)):
         """
         Computes the direction threshold of an image
+
         :param img: The image to be processed
         :param sobel_kernel: The size of the sobel kernel. Larger the size, the result is more smoothened. By default
         it's 3.
@@ -93,6 +116,7 @@ class Sobel:
 def gamma_threshold(img, gamma=1.0, threshold=(100, 255)):
     """
     build a lookup table mapping the pixel values [0, 255] to their adjusted gamma values
+
     :param img: Image to be processed
     :param gamma: Gamma correction value for the original image (in range of 0.0 to 1.0)
     :param threshold: Treshold to apply for gamma correction
@@ -115,6 +139,7 @@ def gamma_threshold(img, gamma=1.0, threshold=(100, 255)):
 def guassian_blur(img, ksize):
     """
     Applies guassian blur on the image of the size specified by ksize and returns
+
     :param img: Image to be filtered
     :param ksize: Size of the kernel
     :return: Filtered image
@@ -125,6 +150,7 @@ def guassian_blur(img, ksize):
 def median_blur(img, ksize):
     """
     Applies median blur on the image of the size specified by ksize and returns
+
     :param img: Image to be filtered
     :param ksize: Size of the kernel
     :return: Filtered image
@@ -134,6 +160,7 @@ def median_blur(img, ksize):
 def canny(img, low, high):
     """
     Performs and returns the canny thresholded image
+
     :param img: The image to be thresholded
     :param low: Low threshold
     :param high: High threshold
@@ -232,6 +259,7 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap, horizon_
 def running_mean(img, vert_slices, wsize):
     """
     Computes the horizontal moving histogram of an image
+
     :param img: The binary image (ch = 2)
     :param vert_slices: Number of vertical slices
     :param wsize: The window size
