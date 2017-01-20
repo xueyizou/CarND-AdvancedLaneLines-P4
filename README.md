@@ -346,9 +346,7 @@ confidence goes too low, so the system reverts in between for a histogram
 search for a couple of frames, before coming back to tracking.
 
 ## Final Project Video
-<a href="http://www.youtube.com/watch?feature=player_embedded&v=https://youtu.be/Rry9gmfyXyU
-" target="_blank"><img src="http://img.youtube.com/vi/https://youtu.be/Rry9gmfyXyU/0.jpg"
-alt="Final Project Video" width="240" height="180" border="10" /></a>
+<a href="https://www.youtube.com/watch?v=Rry9gmfyXyU" target="_blank"><img src="https://img.youtube.com/vi/Rry9gmfyXyU/0.jpg" alt="Final Project Video" width="240" height="180" border="10" /></a>
 
 ## Introspection
 ### Challenge videos
